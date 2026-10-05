@@ -2,11 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { Register, Timer } from 'claude-code'
 
 import type { Mode } from '../types'
-import { clockText, encodeFrame, fitGrid, joinChunks, songFrom, type Grid, type Meta } from './frames.ts'
+import { clockText, encodeFrame, encodeProgress, fitGrid, joinChunks, songFrom, type Grid, type Meta } from './frames.ts'
 
 const PANE = 'bad-apple'
 const RASTER = 'video'
-const BAND_ROWS = 12
+const PROGRESS = 'progress'
+const BAND_ROWS = 16
+// Cells beside the video in the band: title, time, bar, buttons.
+const INFO_COLUMNS = 20
 // assets/bad-apple.mp3 is constant 96 kbit/s.
 const SONG_BYTES_PER_SECOND = 12000
 
@@ -26,8 +29,9 @@ let frame = 0
 // Song position in ms while paused; `startedAt` maps wall clock to it while playing.
 let position = 0
 let startedAt = 0
-// The Raster the ticker repaints: set by whichever site drew it last.
-let target: { requestId: string; grid: Grid } | undefined
+// The Rasters the ticker repaints: set by whichever site drew them last.
+let target: { requestId: string; grid: Grid; bar: number } | undefined
+let lastProgress = ''
 
 function silence() {
   timer?.cancel()
@@ -39,6 +43,7 @@ function silence() {
 function halt() {
   silence()
   target = undefined
+  lastProgress = ''
   position = 0
   frame = 0
 }
@@ -138,8 +143,13 @@ export const register: Register = on => {
           $.ui.status(`▶ Bad Apple!! ${clockText(elapsed / 1000)} / ${total}`)
         }
         if (target) {
-          const { requestId, grid } = target
+          const { requestId, grid, bar } = target
           await $.ui.blit({ requestId, key: RASTER, cells: encodeFrame(video, data, frame, grid) })
+          const progress = encodeProgress(frame / video.fps, video.frames / video.fps, bar)
+          if (progress !== lastProgress) {
+            lastProgress = progress
+            await $.ui.blit({ requestId, key: PROGRESS, cells: progress })
+          }
         }
       })
       timer = ticker
@@ -184,14 +194,18 @@ export const register: Register = on => {
     }
     const paused = await read($, isPaused)
     const { Box, Text, Button, Raster } = $.ui.resolve(e)
-    const grid = fitGrid(meta, e.props.bodyColumns - 24, Math.min(BAND_ROWS, e.props.maxRows - 1))
-    target = { requestId: e.requestId, grid }
+    const grid = fitGrid(meta, e.props.bodyColumns - INFO_COLUMNS - 2, Math.min(BAND_ROWS, e.props.maxRows - 1))
+    const progress = encodeProgress(frame / meta.fps, meta.frames / meta.fps, INFO_COLUMNS)
+    target = { requestId: e.requestId, grid, bar: INFO_COLUMNS }
+    lastProgress = progress
     return (
       <Box flexDirection="row" gap={2}>
         <Raster key={RASTER} columns={grid.columns} rows={grid.rows} cells={encodeFrame(meta, bits, frame, grid)} />
         <Box flexDirection="column">
           <Text bold>Bad Apple!!</Text>
           <Text dimColor>{paused ? 'paused' : 'now playing'}</Text>
+          <Text> </Text>
+          <Raster key={PROGRESS} columns={INFO_COLUMNS} rows={2} cells={progress} />
           <Text> </Text>
           <Button
             key="toggle"
@@ -218,8 +232,11 @@ export const register: Register = on => {
     }
     const paused = await read($, isPaused)
     const { Box, Text, Button, Raster } = $.ui.resolve(e)
-    const grid = fitGrid(meta, e.props.bodyColumns, e.props.scroll.bodyRows - 1)
-    target = { requestId: PANE, grid }
+    const grid = fitGrid(meta, e.props.bodyColumns, e.props.scroll.bodyRows - 2)
+    const bar = Math.max(10, Math.min(40, grid.columns - 14))
+    const progress = encodeProgress(frame / meta.fps, meta.frames / meta.fps, bar)
+    target = { requestId: PANE, grid, bar }
+    lastProgress = progress
     return (
       <Box flexDirection="column">
         <Raster key={RASTER} columns={grid.columns} rows={grid.rows} cells={encodeFrame(meta, bits, frame, grid)} />
@@ -230,7 +247,7 @@ export const register: Register = on => {
             hotkey="p"
             onPress={() => player?.('toggle')}
           />
-          <Text dimColor>Bad Apple!! - Esc closes</Text>
+          <Raster key={PROGRESS} columns={bar} rows={2} cells={progress} />
         </Box>
       </Box>
     )

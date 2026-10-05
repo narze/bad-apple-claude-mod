@@ -1,7 +1,7 @@
 import type { On, RenderElement } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { clockText, encodeFrame, fitGrid, id3End, joinChunks, songFrom, type Meta } from './frames.ts'
+import { clockText, encodeFrame, encodeProgress, fitGrid, id3End, joinChunks, songFrom, type Meta } from './frames.ts'
 
 const META: Meta = { width: 8, height: 4, fps: 30, frames: 2, framesPerChunk: 1, chunks: 2 }
 
@@ -9,25 +9,60 @@ function cellsOf(base64: string) {
   return new Uint32Array(Uint8Array.fromBase64(base64).buffer)
 }
 
-test('fitGrid keeps the 4:3 aspect with two pixels per row', () => {
-  const big: Meta = { ...META, width: 96, height: 72 }
+test('fitGrid keeps the 4:3 aspect and never upscales', () => {
+  const big: Meta = { ...META, width: 192, height: 144 }
+  // 2x4 pixels per cell: 96x36 cells is 192x144 pixels, one to one
   expect(fitGrid(big, 200, 100)).toEqual({ columns: 96, rows: 36 })
   expect(fitGrid(big, 48, 100)).toEqual({ columns: 48, rows: 18 })
   expect(fitGrid(big, 200, 18)).toEqual({ columns: 48, rows: 18 })
 })
 
-test('encodeFrame paints top pixel as fg and bottom pixel as bg', () => {
-  // frame 0: top row white, rest black; frame 1: all white
-  const bits = joinChunks([
-    Uint8Array.of(0xff, 0x00, 0x00, 0x00),
-    Uint8Array.of(0xff, 0xff, 0xff, 0xff),
-  ])
-  const first = cellsOf(encodeFrame(META, bits, 0, { columns: 8, rows: 2 }))
-  expect(first.length).toBe(8 * 2 * 3)
-  expect(Array.from(first.slice(0, 3))).toEqual([0x2580, 0xffffff, 0x000000])
-  expect(Array.from(first.slice(24, 27))).toEqual([0x2580, 0x000000, 0x000000])
-  const second = cellsOf(encodeFrame(META, bits, 1, { columns: 8, rows: 2 }))
-  expect(Array.from(second.slice(24, 27))).toEqual([0x2580, 0xffffff, 0xffffff])
+// 8x4 pixels, MSB first per row of 8
+const FRAMES = joinChunks([
+  Uint8Array.of(0xff, 0x00, 0x00, 0x00), // 0: top row lit
+  Uint8Array.of(0xff, 0xff, 0xff, 0xff), // 1: all lit
+  Uint8Array.of(0xaa, 0xaa, 0x80, 0x00), // 2: left dots, rows 0-1, plus one in row 2
+  Uint8Array.of(0xaa, 0xaa, 0xaa, 0xaa), // 3: left column of every cell
+  Uint8Array.of(0xf0, 0xf0, 0xf0, 0xf0), // 4: left half lit
+])
+
+function glyphs(frame: number, grid: { columns: number; rows: number }) {
+  const words = cellsOf(encodeFrame(META, FRAMES, frame, grid))
+  expect(words.length).toBe(grid.columns * grid.rows * 3)
+  return Array.from({ length: grid.columns * grid.rows }, (_, i) => String.fromCodePoint(words[i * 3] ?? 0)).join('')
+}
+
+test('encodeFrame maps 2x4 pixels to one braille cell at native size', () => {
+  const native = { columns: 4, rows: 1 }
+  expect(glyphs(0, native)).toBe('⠉⠉⠉⠉')
+  expect(glyphs(2, native)).toBe('⠇▘▘▘')
+  const words = cellsOf(encodeFrame(META, FRAMES, 0, native))
+  expect(Array.from(words.slice(0, 3))).toEqual([0x2809, 0xffffff, 0x000000])
+})
+
+test('encodeFrame draws solid blocks where a cell is a quadrant shape', () => {
+  const native = { columns: 4, rows: 1 }
+  expect(glyphs(1, native)).toBe('████')
+  expect(glyphs(3, native)).toBe('▌▌▌▌')
+})
+
+test('encodeFrame shrinks by pixel coverage', () => {
+  // 8x4 into 2x1 cells = 4x4 pixels, each from a 2x1 block
+  expect(glyphs(4, { columns: 2, rows: 1 })).toBe('█ ')
+  expect(glyphs(0, { columns: 2, rows: 1 })).toBe('⠉⠉')
+})
+
+test('encodeProgress shows the time and a bar that fills by eighths', () => {
+  const rowsOf = (base64: string, columns: number) => {
+    const words = cellsOf(base64)
+    const row = (r: number) =>
+      Array.from({ length: columns }, (_, c) => String.fromCodePoint(words[(r * columns + c) * 3] ?? 0)).join('')
+    return [row(0), row(1)]
+  }
+  expect(rowsOf(encodeProgress(0, 200, 10), 10)).toEqual(['0:00 / 3:2', '          '])
+  expect(rowsOf(encodeProgress(100, 200, 16), 16)).toEqual(['1:40 / 3:20     ', '████████        '])
+  expect(rowsOf(encodeProgress(25 + 25 / 8 * 3, 200, 8), 8)[1]).toBe('█▍      ')
+  expect(rowsOf(encodeProgress(200, 200, 4), 4)[1]).toBe('████')
 })
 
 test('clockText formats minutes and seconds', () => {
@@ -72,7 +107,7 @@ const BAND = {
   surface: 'terminal',
   component: 'AbovePrompt',
   requestId: 'band',
-  props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 40, scroll: { offset: 0, bodyRows: 19, contentRows: 4 }, view: {} },
+  props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 60, scroll: { offset: 0, bodyRows: 19, contentRows: 4 }, view: {} },
 } as never
 
 test('songFrom skips the ID3 tag and cuts at the byte rate', () => {
@@ -116,7 +151,8 @@ test('/bad-apple plays in the band by default until Stop', async ($, on) => {
   expect(ran.text).toContain('above the prompt')
   expect(opened).toEqual([])
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Raster' })).toBeDefined()
+  expect(await ui.find({ key: 'video' })).toBeDefined()
+  expect((await ui.find({ key: 'progress' }))?.props).toMatchObject({ columns: 20, rows: 2 })
   await ui.press({ key: 'stop' })
   expect(await ui.find({ type: 'Raster' })).toBeUndefined()
   await ui.unmount()
