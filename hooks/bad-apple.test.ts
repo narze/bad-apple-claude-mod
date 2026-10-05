@@ -110,7 +110,11 @@ function fakeStore(on: On, entries: Record<string, unknown> = {}) {
 }
 
 // Beneath the plugin: the engine's calls it makes, answered in memory.
-function fakeEngine(on: On, store = true) {
+// What the fake engine saw and what the tests set: whether the assets
+// are built, and the status lines and toasts shown.
+type World = { hasAssets: boolean; statuses: string[]; toasts: string[] }
+
+function fakeEngine(on: On, store = true, world: World = { hasAssets: true, statuses: [], toasts: [] }) {
   engineBand(on)
   if (store) fakeStore(on)
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
@@ -123,10 +127,16 @@ function fakeEngine(on: On, store = true) {
     return { value: { isPlaced: true as const } }
   })
   on('ui.close', async () => ({ value: undefined }))
-  on('ui.status', async () => ({ value: undefined }))
-  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.status', async ($, e) => {
+    if (e.text !== undefined) world.statuses.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.toast', async ($, e) => {
+    world.toasts.push(e.text)
+    return { value: undefined }
+  })
   on('ui.blit', async () => ({ value: {} }))
-  on('fs.exists', async () => ({ value: true }))
+  on('fs.exists', async () => ({ value: world.hasAssets }))
   on('fs.read', async ($, e) => {
     if (e.path.endsWith('meta.json')) return { value: JSON.stringify(META) }
     return { value: { base64: Uint8Array.of(0xff, 0, 0, 0).toBase64() } }
@@ -264,15 +274,70 @@ test('band stays empty while nothing plays', async ($, on) => {
   await ui.unmount()
 })
 
-test('without built assets it says how to build them', async ($, on) => {
-  engineBand(on)
-  fakeStore(on)
-  on('session.start', async ($, e) => ({ cwd: e.cwd }))
-  on('command.register', async ($, e) => ({ value: { command: e.name } }))
-  on('ui.close', async () => ({ value: undefined }))
-  on('ui.status', async () => ({ value: undefined }))
-  on('fs.exists', async () => ({ value: false }))
+// Lets the background build loop run to its end.
+async function settle() {
+  for (let i = 0; i < 500; i++) await Promise.resolve()
+}
+
+test('without assets the first /bad-apple builds them, then plays', async ($, on) => {
+  const world: World = { hasAssets: false, statuses: [], toasts: [] }
+  fakeEngine(on, true, world)
+  const spawned: string[][] = []
+  on('process.spawn', async function* ($, e) {
+    spawned.push([...e.argv])
+    yield { stream: 'stderr' as const, text: 'Downloading https://www.youtube.com/watch?v=x ...\n' }
+    yield { stream: 'stdout' as const, text: 'Extracting frames and audio...\nPacking frames...\n' }
+    world.hasAssets = true
+    return { value: { code: 0, signal: null } }
+  })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ran = await $.command.run({ command: 'bad-apple', args: '' } as never)
-  expect(ran.text).toContain('scripts/build-assets.sh')
+  expect(ran.text).toContain('Building')
+  await settle()
+  expect(spawned.length).toBe(1)
+  expect(spawned[0]?.[0]).toBe('bash')
+  expect(spawned[0]?.[1]).toMatch(/scripts\/build-assets\.sh$/)
+  expect(world.statuses).toContain('bad-apple: Downloading the video…')
+  expect(world.statuses).toContain('bad-apple: Packing frames…')
+  expect(world.toasts.some(text => /ready/.test(text))).toBe(true)
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ key: 'video' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('asking again while it builds starts no second build', async ($, on) => {
+  const world: World = { hasAssets: false, statuses: [], toasts: [] }
+  fakeEngine(on, true, world)
+  let builds = 0
+  let finish: () => void = () => {}
+  const done = new Promise<void>(resolve => { finish = resolve })
+  on('process.spawn', async function* () {
+    builds++
+    yield { stream: 'stdout' as const, text: 'Packing frames...\n' }
+    await done
+    return { value: { code: 1, signal: null } }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'bad-apple', args: '' } as never)
+  const again = await $.command.run({ command: 'bad-apple', args: 'pane' } as never)
+  expect(again.text).toContain('still building')
+  expect(builds).toBe(1)
+  finish()
+  await settle()
+})
+
+test('a failed build says why and plays nothing', async ($, on) => {
+  const world: World = { hasAssets: false, statuses: [], toasts: [] }
+  fakeEngine(on, true, world)
+  on('process.spawn', async function* () {
+    yield { stream: 'stderr' as const, text: 'scripts/build-assets.sh: line 16: ffmpeg: command not found\n' }
+    return { value: { code: 127, signal: null } }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'bad-apple', args: '' } as never)
+  await settle()
+  expect(world.toasts.some(text => text.includes('ffmpeg: command not found'))).toBe(true)
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ key: 'video' })).toBeUndefined()
+  await ui.unmount()
 })

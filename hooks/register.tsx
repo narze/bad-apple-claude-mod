@@ -57,6 +57,15 @@ type Action = 'band' | 'pane' | 'pause' | 'resume' | 'toggle' | 'restart' | 'gra
 // The player's verbs, made in session.start so a command and a Button press
 // both reach them; set again on every load.
 let player: ((action: Action) => Promise<string>) | undefined
+// True while scripts/build-assets.sh runs, so a second ask starts no second build.
+let building = false
+
+// The build script's step messages, as the status line shows them.
+const BUILD_STEPS: Array<[RegExp, string]> = [
+  [/^Downloading/, 'Downloading the video…'],
+  [/^Extracting/, 'Extracting frames and audio…'],
+  [/^Packing/, 'Packing frames…'],
+]
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -114,7 +123,44 @@ export const register: Register = on => {
       if (!meta || !bits || !song) {
         const dir = `${$.plugin.root}/assets`
         if (!(await $.fs.exists(`${dir}/meta.json`))) {
-          return `No frames yet: run ${$.plugin.root}/scripts/build-assets.sh first.`
+          if (building) return 'Bad Apple!! is still building its assets - it plays when ready.'
+          // First run: build the assets in the background, then play where asked.
+          building = true
+          const want: Action = action === 'pane' ? 'pane' : 'band'
+          $.ui.status('bad-apple: Building assets…')
+          void (async () => {
+            let lastError = ''
+            let code: number | null = null
+            try {
+              const build = $.process.spawn({
+                argv: ['bash', `${$.plugin.root}/scripts/build-assets.sh`],
+                cwd: $.plugin.root,
+              })
+              for (;;) {
+                const piece = await build.next()
+                if (piece.done) {
+                  code = piece.value.code
+                  break
+                }
+                for (const line of piece.value.text.split('\n').map(one => one.trim()).filter(Boolean)) {
+                  const step = BUILD_STEPS.find(([pattern]) => pattern.test(line))
+                  if (step) $.ui.status(`bad-apple: ${step[1]}`)
+                  if (piece.value.stream === 'stderr') lastError = line
+                }
+              }
+            } catch (error) {
+              lastError = error instanceof Error ? error.message : String(error)
+            }
+            building = false
+            $.ui.status(undefined)
+            if (code === 0 && (await $.fs.exists(`${dir}/meta.json`))) {
+              $.ui.toast('Bad Apple!! assets ready - playing')
+              await player?.(want)
+            } else {
+              $.ui.toast(`bad-apple: building assets failed${code === null ? '' : ` (exit ${code})`}: ${lastError || 'no output'}`)
+            }
+          })()
+          return 'Building Bad Apple!! assets (first run: download and convert, about a minute) - it plays when ready.'
         }
         const info: Meta = JSON.parse(await $.fs.read(`${dir}/meta.json`))
         const parts: Uint8Array[] = []
