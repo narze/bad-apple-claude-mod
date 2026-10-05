@@ -1,0 +1,4 @@
+# Built locally by scripts/build-assets.sh - copyrighted, not redistributed
+assets/
+# Written by Claude Code at each load
+.claude-plugin/types/

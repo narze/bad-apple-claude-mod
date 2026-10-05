@@ -1,0 +1,4 @@
+{
+  "extends": "./.claude-plugin/types/tsconfig.json",
+  "compilerOptions": { "lib": ["esnext"], "allowImportingTsExtensions": true }
+}

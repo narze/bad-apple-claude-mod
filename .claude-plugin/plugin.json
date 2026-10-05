@@ -1,0 +1,1 @@
+{ "name": "bad-apple", "version": "0.2.0", "description": "Plays Bad Apple!! in a pane or the band above the prompt, with sound", "author": { "name": "narze" }, "types": "./types/index.d.ts" }
