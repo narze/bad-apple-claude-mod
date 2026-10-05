@@ -59,6 +59,19 @@ test('encodeFrame antialiases partly lit quarters with gray', () => {
   expect(cells(3, { columns: 2, rows: 1 })[0]).toEqual({ glyph: '█', fg: 0x848484, bg: 0x848484 })
 })
 
+test('encodeFrame without gray cuts each quarter to black or white', () => {
+  const top = cellsOf(encodeFrame(META, FRAMES, 0, { columns: 4, rows: 1 }, true))
+  expect(Array.from(top.slice(0, 3))).toEqual([0x2580, 0xffffff, 0x000000])
+  const half = cellsOf(encodeFrame(META, FRAMES, 3, { columns: 2, rows: 1 }, true))
+  expect(Array.from(half.slice(0, 3))).toEqual([0x2588, 0xffffff, 0xffffff])
+  const colors = new Set<number>()
+  for (let f = 0; f < 5; f++) {
+    const words = cellsOf(encodeFrame(META, FRAMES, f, { columns: 3, rows: 1 }, true))
+    words.forEach((word, i) => { if (i % 3) colors.add(word) })
+  }
+  expect([...colors].sort()).toEqual([0x000000, 0xffffff])
+})
+
 test('encodeProgress shows the time and a bar that fills by eighths', () => {
   const rowsOf = (base64: string, columns: number) => {
     const words = cellsOf(base64)
@@ -85,9 +98,21 @@ function engineBand(on: On) {
   })
 }
 
+// $.store in memory; returns the map so a test can look inside.
+function fakeStore(on: On, entries: Record<string, unknown> = {}) {
+  const store = new Map(Object.entries(entries))
+  on('store.get', async ($, e) => ({ value: store.get(e.key) }))
+  on('store.set', async ($, e) => {
+    store.set(e.key, e.value)
+    return { value: undefined }
+  })
+  return store
+}
+
 // Beneath the plugin: the engine's calls it makes, answered in memory.
-function fakeEngine(on: On) {
+function fakeEngine(on: On, store = true) {
   engineBand(on)
+  if (store) fakeStore(on)
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
   on('command.register', async ($, e) => ({ value: { command: e.name } }))
   mock.clock(on)
@@ -205,6 +230,33 @@ test('restart with nothing playing starts the band', async ($, on) => {
   expect(ran.text).toContain('above the prompt')
 })
 
+test('Gray is off by default; the button turns it on and remembers it', async ($, on) => {
+  fakeEngine(on, false)
+  const store = fakeStore(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'bad-apple', args: '' } as never)
+  const ui = await $.ui.mount(BAND)
+  expect((await ui.find({ key: 'gray' }))?.props.label).toBe('Gray: off')
+  await ui.press({ key: 'gray' })
+  expect((await ui.find({ key: 'gray' }))?.props.label).toBe('Gray: on')
+  expect(store.get('isMono')).toBe(false)
+  const ran = await $.command.run({ command: 'bad-apple', args: 'gray' } as never)
+  expect(ran.text).toBe('Grayscale off.')
+  expect((await ui.find({ key: 'gray' }))?.props.label).toBe('Gray: off')
+  expect(store.get('isMono')).toBe(true)
+  await ui.unmount()
+})
+
+test('a stored choice of gray on wins over the default', async ($, on) => {
+  fakeEngine(on, false)
+  fakeStore(on, { isMono: false })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'bad-apple', args: '' } as never)
+  const ui = await $.ui.mount(BAND)
+  expect((await ui.find({ key: 'gray' }))?.props.label).toBe('Gray: on')
+  await ui.unmount()
+})
+
 test('band stays empty while nothing plays', async ($, on) => {
   engineBand(on)
   const ui = await $.ui.mount(BAND)
@@ -214,6 +266,7 @@ test('band stays empty while nothing plays', async ($, on) => {
 
 test('without built assets it says how to build them', async ($, on) => {
   engineBand(on)
+  fakeStore(on)
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
   on('command.register', async ($, e) => ({ value: { command: e.name } }))
   on('ui.close', async () => ({ value: undefined }))

@@ -59,8 +59,9 @@ function spans(count: number, size: number): Array<[number, number]> {
 
 // One frame from the packed 1-bit data (MSB first, row-major) as base64 cells.
 // At 96x36 cells a 192x144 video gives each quarter a 1x2 pixel block;
-// smaller grids average bigger blocks, so nothing is upscaled.
-export function encodeFrame(meta: Meta, bits: Uint8Array, frame: number, grid: Grid): string {
+// smaller grids average bigger blocks, so nothing is upscaled. With
+// `isMono` each quarter is cut to black or white: no gray, crisp edges.
+export function encodeFrame(meta: Meta, bits: Uint8Array, frame: number, grid: Grid, isMono = false): string {
   const { width, height } = meta
   const base = frame * ((width * height) >> 3)
   const source = (x: number, y: number) => {
@@ -74,7 +75,8 @@ export function encodeFrame(meta: Meta, bits: Uint8Array, frame: number, grid: G
     const [y0, y1] = ys[qy] ?? [0, 1]
     let on = 0
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) on += source(x, y)
-    return on / ((x1 - x0) * (y1 - y0))
+    const lit = on / ((x1 - x0) * (y1 - y0))
+    return isMono ? (lit >= 0.5 ? 1 : 0) : lit
   }
   const words = new Uint32Array(grid.columns * grid.rows * 3)
   const quarter = [0, 0, 0, 0]

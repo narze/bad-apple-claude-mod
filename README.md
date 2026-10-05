@@ -3,7 +3,7 @@
 Plays **Bad Apple!!** inside Claude Code, as a mod (a plugin of function hooks).
 The video plays in the band above the prompt, or in a side pane, with the song in sync.
 
-- Antialiased quadrant cells: each cell is a solid quadrant glyph (`▘▀▌▙█…`) over 2x2 quarters with two of 32 gray levels, the best two-tone fit to how much of each quarter is lit; all drawn as one `Raster`
+- Quadrant cells: each cell is a solid quadrant glyph (`▘▀▌▙█…`) over 2x2 quarters, drawn as one `Raster`. Black and white by default; with **gray on**, each cell takes two of 32 gray levels, the best two-tone fit to how much of each quarter is lit, so edges are antialiased
 - 192x144 frames into at most 96x36 cells; smaller sites average bigger pixel blocks, never upscale
 - About 60 repaints a second with `$.ui.blit`, frame picked from the wall clock so video stays in sync with the song
 - Pause and resume, also for the song (the mod cuts the constant-bitrate MP3 at the right byte)
@@ -17,9 +17,10 @@ The video plays in the band above the prompt, or in a side pane, with the song i
 | `/bad-apple pane` | Play in a pane (Esc closes it) |
 | `/bad-apple pause` / `resume` | Pause or resume |
 | `/bad-apple restart` | Play again from 0:00, in the same place |
+| `/bad-apple gray` | Turn grayscale antialiasing on or off (off by default; remembered across sessions) |
 | `/bad-apple stop` | Stop |
 
-The band has **Pause/Resume** (`p`), **Restart** (`r`) and **Stop** (`s`) buttons; the pane has Pause/Resume and Restart.
+The band has **Pause/Resume** (`p`), **Restart** (`r`), **Gray** (`g`) and **Stop** (`s`) buttons; the pane has all but Stop (Esc closes it).
 
 Sound plays through `afplay`, so only on macOS. Other systems get the video only.
 
@@ -59,7 +60,7 @@ npx -p typescript tsc -p .   # after Claude Code has loaded the mod once (it wri
 | `hooks/register.tsx` | Command, player, band and pane drawing |
 | `hooks/frames.ts` | Pure helpers: grid fit, frame encoding, MP3 offset |
 | `hooks/bad-apple.test.ts` | Tests (`claude plugin test`) |
-| `types/index.d.ts` | `$.state` contract (`mode`, `isPaused`) |
+| `types/index.d.ts` | `$.state` contract (`mode`, `isPaused`, `isMono`) |
 | `scripts/download-video.sh` | Downloads the working video file to `work/` |
 | `scripts/build-assets.sh` | Builds `assets/` from the working file |
 

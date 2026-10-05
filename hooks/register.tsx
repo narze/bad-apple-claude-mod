@@ -17,6 +17,8 @@ const SONG_BYTES_PER_SECOND = 12000
 // when either changes.
 const mode = atom({ plugin: 'bad-apple', key: 'mode' } as const, 'off' as Mode)
 const isPaused = atom({ plugin: 'bad-apple', key: 'isPaused' } as const, false)
+// Grayscale off (the default): black and white only. Kept across sessions in $.store.
+const isMono = atom({ plugin: 'bad-apple', key: 'isMono' } as const, true)
 
 // Player state lives in the module: a reload drops the timer anyway, so
 // a fresh load with a stopped player is the right state after one.
@@ -32,6 +34,8 @@ let startedAt = 0
 // The Rasters the ticker repaints: set by whichever site drew them last.
 let target: { requestId: string; grid: Grid; bar: number } | undefined
 let lastProgress = ''
+// Mirrors `isMono` for the ticker, which repaints without reading state.
+let mono = true
 
 function silence() {
   timer?.cancel()
@@ -48,7 +52,7 @@ function halt() {
   frame = 0
 }
 
-type Action = 'band' | 'pane' | 'pause' | 'resume' | 'toggle' | 'restart' | 'stop'
+type Action = 'band' | 'pane' | 'pause' | 'resume' | 'toggle' | 'restart' | 'gray' | 'stop'
 
 // The player's verbs, made in session.start so a command and a Button press
 // both reach them; set again on every load.
@@ -58,11 +62,19 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'bad-apple',
-      description: 'Play Bad Apple!! above the prompt (pane, pause, resume, restart, stop)',
-      argumentHint: '[pane|pause|resume|restart|stop]',
+      description: 'Play Bad Apple!! above the prompt (pane, pause, resume, restart, gray, stop)',
+      argumentHint: '[pane|pause|resume|restart|gray|stop]',
     })
+    mono = (await $.store.get('isMono').catch(() => undefined)) !== false
+    await update($, isMono, () => mono)
 
     player = async asked => {
+      if (asked === 'gray') {
+        mono = !(await read($, isMono))
+        await update($, isMono, () => mono)
+        await $.store.set('isMono', mono)
+        return mono ? 'Grayscale off.' : 'Grayscale on.'
+      }
       const where = await read($, mode)
       const paused = await read($, isPaused)
       const action = asked === 'toggle'
@@ -155,7 +167,7 @@ export const register: Register = on => {
         }
         if (target) {
           const { requestId, grid, bar } = target
-          await $.ui.blit({ requestId, key: RASTER, cells: encodeFrame(video, data, frame, grid) })
+          await $.ui.blit({ requestId, key: RASTER, cells: encodeFrame(video, data, frame, grid, mono) })
           const progress = encodeProgress(frame / video.fps, video.frames / video.fps, bar)
           if (progress !== lastProgress) {
             lastProgress = progress
@@ -177,9 +189,9 @@ export const register: Register = on => {
 
   on('command.run', { command: 'bad-apple' }, async ($, e) => {
     const arg = e.args.trim() || 'band'
-    const actions: Action[] = ['band', 'pane', 'pause', 'resume', 'toggle', 'restart', 'stop']
+    const actions: Action[] = ['band', 'pane', 'pause', 'resume', 'toggle', 'restart', 'gray', 'stop']
     const action = actions.find(one => one === arg)
-    if (!action) return { text: `Unknown "${arg}". Use /bad-apple [pane|pause|resume|restart|stop].` }
+    if (!action) return { text: `Unknown "${arg}". Use /bad-apple [pane|pause|resume|restart|gray|stop].` }
     if (!player) return { text: 'bad-apple: not ready yet, try again.' }
     return { text: await player(action) }
   })
@@ -205,6 +217,7 @@ export const register: Register = on => {
       return next(e)
     }
     const paused = await read($, isPaused)
+    mono = await read($, isMono)
     const { Box, Text, Button, Raster } = $.ui.resolve(e)
     const grid = fitGrid(meta, e.props.bodyColumns - INFO_COLUMNS - 2, Math.min(BAND_ROWS, e.props.maxRows - 1))
     const progress = encodeProgress(frame / meta.fps, meta.frames / meta.fps, INFO_COLUMNS)
@@ -212,7 +225,7 @@ export const register: Register = on => {
     lastProgress = progress
     return (
       <Box flexDirection="row" gap={2}>
-        <Raster key={RASTER} columns={grid.columns} rows={grid.rows} cells={encodeFrame(meta, bits, frame, grid)} />
+        <Raster key={RASTER} columns={grid.columns} rows={grid.rows} cells={encodeFrame(meta, bits, frame, grid, mono)} />
         <Box flexDirection="column">
           <Text bold>Bad Apple!!</Text>
           <Text dimColor>{paused ? 'paused' : 'now playing'}</Text>
@@ -233,6 +246,12 @@ export const register: Register = on => {
             onPress={() => player?.('restart')}
           />
           <Button
+            key="gray"
+            label={mono ? 'Gray: off' : 'Gray: on'}
+            hotkey="g"
+            onPress={() => player?.('gray')}
+          />
+          <Button
             key="stop"
             label="Stop"
             hotkey="s"
@@ -249,15 +268,16 @@ export const register: Register = on => {
       return <Text dimColor>{meta ? 'Bad Apple!! plays in the terminal only.' : 'Loading frames…'}</Text>
     }
     const paused = await read($, isPaused)
+    mono = await read($, isMono)
     const { Box, Button, Raster } = $.ui.resolve(e)
     const grid = fitGrid(meta, e.props.bodyColumns, e.props.scroll.bodyRows - 2)
-    const bar = Math.max(10, Math.min(40, grid.columns - 26))
+    const bar = Math.max(10, Math.min(40, grid.columns - 40))
     const progress = encodeProgress(frame / meta.fps, meta.frames / meta.fps, bar)
     target = { requestId: PANE, grid, bar }
     lastProgress = progress
     return (
       <Box flexDirection="column">
-        <Raster key={RASTER} columns={grid.columns} rows={grid.rows} cells={encodeFrame(meta, bits, frame, grid)} />
+        <Raster key={RASTER} columns={grid.columns} rows={grid.rows} cells={encodeFrame(meta, bits, frame, grid, mono)} />
         <Box flexDirection="row" gap={2}>
           <Button
             key="toggle"
@@ -266,6 +286,7 @@ export const register: Register = on => {
             onPress={() => player?.('toggle')}
           />
           <Button key="restart" label="Restart" hotkey="r" onPress={() => player?.('restart')} />
+          <Button key="gray" label={mono ? 'Gray: off' : 'Gray: on'} hotkey="g" onPress={() => player?.('gray')} />
           <Raster key={PROGRESS} columns={bar} rows={2} cells={progress} />
         </Box>
       </Box>
