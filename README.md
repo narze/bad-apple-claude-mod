@@ -55,3 +55,7 @@ npx -p typescript tsc -p .   # after Claude Code has loaded the mod once (it wri
 
 Bad Apple!! is a song from Touhou Project by ZUN, arranged by Alstroemeria Records, with the shadow-art PV by Anira.
 This repo has no part of the video or the song.
+
+## License
+
+The code is [MIT](LICENSE). The MIT license does not cover the video or the song.
