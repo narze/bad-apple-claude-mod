@@ -26,16 +26,19 @@ Sound plays through `afplay`, so only on macOS. Other systems get the video only
 
 ## Install
 
-The video frames and the song are not in this repo. Build them on your machine.
-You need `ffmpeg`, `python3`, and `yt-dlp` (or `uvx`, which runs the latest `yt-dlp`).
+From the [narze-mods marketplace](https://github.com/narze/claude-mods):
 
-```sh
-git clone https://github.com/narze/bad-apple-claude-mod
-cd bad-apple-claude-mod
-./scripts/download-video.sh   # yt-dlp: YouTube -> work/bad-apple.webm
-./scripts/build-assets.sh     # work file -> assets/
-claude --plugin-dir "$PWD"
 ```
+/plugin marketplace add narze/claude-mods
+/plugin install bad-apple@narze-mods
+```
+
+Or from a clone: `claude --plugin-dir /path/to/bad-apple-claude-mod`.
+
+The video frames and the song are not in this repo. The first `/bad-apple` builds them on your machine
+in the background (download and convert, about a minute), shows the steps in the status line, and plays when ready.
+You need `ffmpeg`, `python3`, and `yt-dlp` (or `uv`, so the build can run the latest `yt-dlp` with `uvx`).
+If the build fails, a toast says why. You can also build by hand with the scripts below.
 
 ### Scripts
 
