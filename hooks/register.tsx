@@ -48,7 +48,7 @@ function halt() {
   frame = 0
 }
 
-type Action = 'band' | 'pane' | 'pause' | 'resume' | 'toggle' | 'stop'
+type Action = 'band' | 'pane' | 'pause' | 'resume' | 'toggle' | 'restart' | 'stop'
 
 // The player's verbs, made in session.start so a command and a Button press
 // both reach them; set again on every load.
@@ -58,14 +58,16 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'bad-apple',
-      description: 'Play Bad Apple!! above the prompt (pane, pause, resume, stop)',
-      argumentHint: '[pane|pause|resume|stop]',
+      description: 'Play Bad Apple!! above the prompt (pane, pause, resume, restart, stop)',
+      argumentHint: '[pane|pause|resume|restart|stop]',
     })
 
     player = async asked => {
       const where = await read($, mode)
       const paused = await read($, isPaused)
-      const action = asked === 'toggle' ? (paused ? 'resume' : 'pause') : asked
+      const action = asked === 'toggle'
+        ? (paused ? 'resume' : 'pause')
+        : asked === 'restart' && where === 'off' ? 'band' : asked
 
       if (action === 'pause') {
         if (where === 'off' || paused) return 'Bad Apple!! is not playing.'
@@ -78,7 +80,16 @@ export const register: Register = on => {
 
       if (action === 'resume' && (where === 'off' || !paused)) return 'Bad Apple!! is not paused.'
 
-      if (action !== 'resume') {
+      // Resume and restart keep playing where it is; the rest pick a site anew.
+      const isSameSite = action === 'resume' || action === 'restart'
+      if (action === 'restart') {
+        silence()
+        position = 0
+        frame = 0
+        lastProgress = ''
+      }
+
+      if (!isSameSite) {
         // Switch off the old site first, so its close does not stop the new one.
         halt()
         await update($, isPaused, () => false)
@@ -108,7 +119,7 @@ export const register: Register = on => {
       const data = bits
       const total = clockText(video.frames / video.fps)
 
-      if (action !== 'resume') {
+      if (!isSameSite) {
         await update($, mode, () => action)
         if (action === 'pane') {
           await $.ui.open({ id: PANE, title: 'Bad Apple!!', focus: true, closeOnEscape: true, rows: 40, columns: 98 })
@@ -155,6 +166,7 @@ export const register: Register = on => {
       timer = ticker
 
       if (action === 'resume') return 'Bad Apple!! resumed.'
+      if (action === 'restart') return 'Bad Apple!! restarted.'
       return action === 'band'
         ? 'Playing Bad Apple!! above the prompt - /bad-apple stop ends it.'
         : 'Playing Bad Apple!! - Esc closes the pane.'
@@ -165,9 +177,9 @@ export const register: Register = on => {
 
   on('command.run', { command: 'bad-apple' }, async ($, e) => {
     const arg = e.args.trim() || 'band'
-    const actions: Action[] = ['band', 'pane', 'pause', 'resume', 'toggle', 'stop']
+    const actions: Action[] = ['band', 'pane', 'pause', 'resume', 'toggle', 'restart', 'stop']
     const action = actions.find(one => one === arg)
-    if (!action) return { text: `Unknown "${arg}". Use /bad-apple [pane|pause|resume|stop].` }
+    if (!action) return { text: `Unknown "${arg}". Use /bad-apple [pane|pause|resume|restart|stop].` }
     if (!player) return { text: 'bad-apple: not ready yet, try again.' }
     return { text: await player(action) }
   })
@@ -215,6 +227,12 @@ export const register: Register = on => {
             onPress={() => player?.('toggle')}
           />
           <Button
+            key="restart"
+            label="Restart"
+            hotkey="r"
+            onPress={() => player?.('restart')}
+          />
+          <Button
             key="stop"
             label="Stop"
             hotkey="s"
@@ -231,9 +249,9 @@ export const register: Register = on => {
       return <Text dimColor>{meta ? 'Bad Apple!! plays in the terminal only.' : 'Loading frames…'}</Text>
     }
     const paused = await read($, isPaused)
-    const { Box, Text, Button, Raster } = $.ui.resolve(e)
+    const { Box, Button, Raster } = $.ui.resolve(e)
     const grid = fitGrid(meta, e.props.bodyColumns, e.props.scroll.bodyRows - 2)
-    const bar = Math.max(10, Math.min(40, grid.columns - 14))
+    const bar = Math.max(10, Math.min(40, grid.columns - 26))
     const progress = encodeProgress(frame / meta.fps, meta.frames / meta.fps, bar)
     target = { requestId: PANE, grid, bar }
     lastProgress = progress
@@ -247,6 +265,7 @@ export const register: Register = on => {
             hotkey="p"
             onPress={() => player?.('toggle')}
           />
+          <Button key="restart" label="Restart" hotkey="r" onPress={() => player?.('restart')} />
           <Raster key={PROGRESS} columns={bar} rows={2} cells={progress} />
         </Box>
       </Box>

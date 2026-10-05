@@ -3,8 +3,8 @@
 Plays **Bad Apple!!** inside Claude Code, as a mod (a plugin of function hooks).
 The video plays in the band above the prompt, or in a side pane, with the song in sync.
 
-- 2x4 video pixels per terminal cell: braille dots (`⠇⠉⣿…`) for detail, solid quadrant blocks (`▌▀█…`) where the pixels allow, drawn as one `Raster`
-- 192x144 frames map one to one onto 96x36 cells; smaller sites shrink by pixel coverage, never upscale
+- Antialiased quadrant cells: each cell is a solid quadrant glyph (`▘▀▌▙█…`) over 2x2 quarters with two of 32 gray levels, the best two-tone fit to how much of each quarter is lit; all drawn as one `Raster`
+- 192x144 frames into at most 96x36 cells; smaller sites average bigger pixel blocks, never upscale
 - About 60 repaints a second with `$.ui.blit`, frame picked from the wall clock so video stays in sync with the song
 - Pause and resume, also for the song (the mod cuts the constant-bitrate MP3 at the right byte)
 - Time and a progress bar beside the video, and in the status line
@@ -16,9 +16,10 @@ The video plays in the band above the prompt, or in a side pane, with the song i
 | `/bad-apple` | Play in the band above the prompt (default) |
 | `/bad-apple pane` | Play in a pane (Esc closes it) |
 | `/bad-apple pause` / `resume` | Pause or resume |
+| `/bad-apple restart` | Play again from 0:00, in the same place |
 | `/bad-apple stop` | Stop |
 
-The band has **Pause/Resume** (`p`) and **Stop** (`s`) buttons.
+The band has **Pause/Resume** (`p`), **Restart** (`r`) and **Stop** (`s`) buttons; the pane has Pause/Resume and Restart.
 
 Sound plays through `afplay`, so only on macOS. Other systems get the video only.
 

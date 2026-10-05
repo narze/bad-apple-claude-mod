@@ -11,7 +11,6 @@ function cellsOf(base64: string) {
 
 test('fitGrid keeps the 4:3 aspect and never upscales', () => {
   const big: Meta = { ...META, width: 192, height: 144 }
-  // 2x4 pixels per cell: 96x36 cells is 192x144 pixels, one to one
   expect(fitGrid(big, 200, 100)).toEqual({ columns: 96, rows: 36 })
   expect(fitGrid(big, 48, 100)).toEqual({ columns: 48, rows: 18 })
   expect(fitGrid(big, 200, 18)).toEqual({ columns: 48, rows: 18 })
@@ -21,35 +20,43 @@ test('fitGrid keeps the 4:3 aspect and never upscales', () => {
 const FRAMES = joinChunks([
   Uint8Array.of(0xff, 0x00, 0x00, 0x00), // 0: top row lit
   Uint8Array.of(0xff, 0xff, 0xff, 0xff), // 1: all lit
-  Uint8Array.of(0xaa, 0xaa, 0x80, 0x00), // 2: left dots, rows 0-1, plus one in row 2
+  Uint8Array.of(0x00, 0x00, 0x00, 0x00), // 2: all dark
   Uint8Array.of(0xaa, 0xaa, 0xaa, 0xaa), // 3: left column of every cell
   Uint8Array.of(0xf0, 0xf0, 0xf0, 0xf0), // 4: left half lit
 ])
 
-function glyphs(frame: number, grid: { columns: number; rows: number }) {
+function cells(frame: number, grid: { columns: number; rows: number }) {
   const words = cellsOf(encodeFrame(META, FRAMES, frame, grid))
   expect(words.length).toBe(grid.columns * grid.rows * 3)
-  return Array.from({ length: grid.columns * grid.rows }, (_, i) => String.fromCodePoint(words[i * 3] ?? 0)).join('')
+  return Array.from({ length: grid.columns * grid.rows }, (_, i) => ({
+    glyph: String.fromCodePoint(words[i * 3] ?? 0),
+    fg: words[i * 3 + 1] ?? 0,
+    bg: words[i * 3 + 2] ?? 0,
+  }))
 }
+const glyphs = (frame: number, grid: { columns: number; rows: number }) =>
+  cells(frame, grid).map(cell => cell.glyph).join('')
 
-test('encodeFrame maps 2x4 pixels to one braille cell at native size', () => {
-  const native = { columns: 4, rows: 1 }
-  expect(glyphs(0, native)).toBe('⠉⠉⠉⠉')
-  expect(glyphs(2, native)).toBe('⠇▘▘▘')
-  const words = cellsOf(encodeFrame(META, FRAMES, 0, native))
-  expect(Array.from(words.slice(0, 3))).toEqual([0x2809, 0xffffff, 0x000000])
+test('encodeFrame draws solid quadrant blocks, brighter part as foreground', () => {
+  const grid = { columns: 4, rows: 1 }
+  expect(glyphs(1, grid)).toBe('████')
+  expect(cells(1, grid)[0]).toEqual({ glyph: '█', fg: 0xffffff, bg: 0xffffff })
+  expect(glyphs(2, grid)).toBe('████')
+  expect(cells(2, grid)[0]).toEqual({ glyph: '█', fg: 0x000000, bg: 0x000000 })
+  expect(glyphs(3, grid)).toBe('▌▌▌▌')
+  expect(cells(3, grid)[0]).toEqual({ glyph: '▌', fg: 0xffffff, bg: 0x000000 })
+  expect(glyphs(4, grid)).toBe('████')
+  expect(cells(4, grid).map(cell => cell.fg)).toEqual([0xffffff, 0xffffff, 0x000000, 0x000000])
 })
 
-test('encodeFrame draws solid blocks where a cell is a quadrant shape', () => {
-  const native = { columns: 4, rows: 1 }
-  expect(glyphs(1, native)).toBe('████')
-  expect(glyphs(3, native)).toBe('▌▌▌▌')
-})
-
-test('encodeFrame shrinks by pixel coverage', () => {
-  // 8x4 into 2x1 cells = 4x4 pixels, each from a 2x1 block
-  expect(glyphs(4, { columns: 2, rows: 1 })).toBe('█ ')
-  expect(glyphs(0, { columns: 2, rows: 1 })).toBe('⠉⠉')
+test('encodeFrame antialiases partly lit quarters with gray', () => {
+  // each quarter of a 4x1 grid covers 1x2 pixels: row 0 lit is half coverage
+  const top = cells(0, { columns: 4, rows: 1 })[0]
+  expect(top?.glyph).toBe('▀')
+  expect(top?.bg).toBe(0x000000)
+  expect(top?.fg).toBe(0x848484)
+  // 2x1 grid: each quarter covers 2x2 pixels, half lit, so the cell is mid gray
+  expect(cells(3, { columns: 2, rows: 1 })[0]).toEqual({ glyph: '█', fg: 0x848484, bg: 0x848484 })
 })
 
 test('encodeProgress shows the time and a bar that fills by eighths', () => {
@@ -173,6 +180,29 @@ test('Pause and Resume toggle the band player', async ($, on) => {
   const again = await $.command.run({ command: 'bad-apple', args: 'resume' } as never)
   expect(again.text).toBe('Bad Apple!! is not paused.')
   await ui.unmount()
+})
+
+test('Restart plays from the start in the same site', async ($, on) => {
+  const opened = fakeEngine(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'bad-apple', args: '' } as never)
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ text: 'paused' })).toBeDefined()
+  await ui.press({ key: 'restart' })
+  expect(await ui.find({ text: 'now playing' })).toBeDefined()
+  expect(await ui.find({ key: 'video' })).toBeDefined()
+  expect(opened).toEqual([])
+  const ran = await $.command.run({ command: 'bad-apple', args: 'restart' } as never)
+  expect(ran.text).toBe('Bad Apple!! restarted.')
+  await ui.unmount()
+})
+
+test('restart with nothing playing starts the band', async ($, on) => {
+  fakeEngine(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ran = await $.command.run({ command: 'bad-apple', args: 'restart' } as never)
+  expect(ran.text).toContain('above the prompt')
 })
 
 test('band stays empty while nothing plays', async ($, on) => {
