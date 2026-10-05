@@ -2,3 +2,5 @@
 assets/
 # Written by Claude Code at each load
 .claude-plugin/types/
+# Downloaded by scripts/download-video.sh
+work/

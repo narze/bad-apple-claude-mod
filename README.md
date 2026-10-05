@@ -3,10 +3,11 @@
 Plays **Bad Apple!!** inside Claude Code, as a mod (a plugin of function hooks).
 The video plays in the band above the prompt, or in a side pane, with the song in sync.
 
-- Half-block pixels (`▀`): one terminal row shows two video rows, drawn as one `Raster`
+- 2x4 video pixels per terminal cell: braille dots (`⠇⠉⣿…`) for detail, solid quadrant blocks (`▌▀█…`) where the pixels allow, drawn as one `Raster`
+- 192x144 frames map one to one onto 96x36 cells; smaller sites shrink by pixel coverage, never upscale
 - About 60 repaints a second with `$.ui.blit`, frame picked from the wall clock so video stays in sync with the song
 - Pause and resume, also for the song (the mod cuts the constant-bitrate MP3 at the right byte)
-- Elapsed time in the status line
+- Time and a progress bar beside the video, and in the status line
 
 ## Use
 
@@ -23,17 +24,26 @@ Sound plays through `afplay`, so only on macOS. Other systems get the video only
 
 ## Install
 
-The video frames and the song are not in this repo. Build them on your machine:
+The video frames and the song are not in this repo. Build them on your machine.
+You need `ffmpeg`, `python3`, and `yt-dlp` (or `uvx`, which runs the latest `yt-dlp`).
 
 ```sh
 git clone https://github.com/narze/bad-apple-claude-mod
 cd bad-apple-claude-mod
-./scripts/build-assets.sh   # needs yt-dlp (or uvx), ffmpeg, python3
+./scripts/download-video.sh   # yt-dlp: YouTube -> work/bad-apple.webm
+./scripts/build-assets.sh     # work file -> assets/
 claude --plugin-dir "$PWD"
 ```
 
-The script downloads the PV, makes 96x72 1-bit frames at 30 fps in `assets/frames-*.bin`,
-and makes a 96 kbit/s mono MP3 in `assets/bad-apple.mp3`.
+### Scripts
+
+| Script | What it does |
+| --- | --- |
+| `scripts/download-video.sh [url] [--force]` | Downloads the PV from YouTube with `yt-dlp` (480p or less) to the working file `work/bad-apple.<ext>`. Skips the download when the file is there; `--force` downloads again. Default URL: `https://www.youtube.com/watch?v=FtutLA63Cp8` |
+| `scripts/build-assets.sh [url] [--force]` | Runs `download-video.sh` (same arguments), then makes 192x144 1-bit frames at 30 fps in `assets/frames-*.bin` and a 96 kbit/s mono MP3 in `assets/bad-apple.mp3` |
+
+If YouTube refuses the download (`HTTP Error 403`), update `yt-dlp`, or install `uv` so the script uses `uvx yt-dlp@latest`.
+`work/` and `assets/` are git-ignored.
 
 ## Develop
 
@@ -49,7 +59,8 @@ npx -p typescript tsc -p .   # after Claude Code has loaded the mod once (it wri
 | `hooks/frames.ts` | Pure helpers: grid fit, frame encoding, MP3 offset |
 | `hooks/bad-apple.test.ts` | Tests (`claude plugin test`) |
 | `types/index.d.ts` | `$.state` contract (`mode`, `isPaused`) |
-| `scripts/build-assets.sh` | Builds `assets/` |
+| `scripts/download-video.sh` | Downloads the working video file to `work/` |
+| `scripts/build-assets.sh` | Builds `assets/` from the working file |
 
 ## Credits
 

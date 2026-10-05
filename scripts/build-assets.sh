@@ -1,23 +1,21 @@
 #!/usr/bin/env bash
 # Builds assets/ (1-bit frames + mp3) from the Bad Apple!! PV.
-# Needs: yt-dlp (or uvx), ffmpeg, python3.
+# Needs: ffmpeg, python3, and for the download yt-dlp (or uvx).
+# Usage: scripts/build-assets.sh [url] [--force]  (passed to download-video.sh)
 set -euo pipefail
 
-URL="${1:-https://www.youtube.com/watch?v=FtutLA63Cp8}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ASSETS="$ROOT/assets"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-if command -v uvx >/dev/null; then YTDLP=(uvx yt-dlp@latest); else YTDLP=(yt-dlp); fi
-
-echo "Downloading video..."
-"${YTDLP[@]}" -q --no-warnings -f "bv*[height<=480]+ba/b[height<=480]" -o "$WORK/video.%(ext)s" "$URL"
-VIDEO="$(ls "$WORK"/video.*)"
+VIDEO="$("$ROOT/scripts/download-video.sh" "$@")"
+echo "Using $VIDEO"
 
 echo "Extracting frames and audio..."
-ffmpeg -v error -y -i "$VIDEO" -vf "fps=30,scale=96:72:flags=area,format=gray" -f rawvideo "$WORK/gray.raw"
+ffmpeg -v error -y -i "$VIDEO" -vf "fps=30,scale=192:144:flags=area,format=gray" -f rawvideo "$WORK/gray.raw"
 mkdir -p "$ASSETS"
+rm -f "$ASSETS"/frames-*.bin
 # Constant 96 kbit/s: the mod seeks by byte offset (12000 bytes a second).
 ffmpeg -v error -y -i "$VIDEO" -vn -ac 1 -c:a libmp3lame -b:a 96k "$ASSETS/bad-apple.mp3"
 
@@ -25,7 +23,7 @@ echo "Packing frames..."
 python3 - "$WORK/gray.raw" "$ASSETS" <<'PY'
 import json, sys
 src, out_dir = sys.argv[1], sys.argv[2]
-W, H, FPS, PER = 96, 72, 30, 1800
+W, H, FPS, PER = 192, 144, 30, 1000
 size = W * H
 data = open(src, 'rb').read()
 frames = len(data) // size
